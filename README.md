@@ -1,10 +1,12 @@
 # HOPE - Hierarchical Online Predictive Encoding
 
-Implementation of the HOPE architecture based on the Nested Learning paper.
+Implementation of the HOPE architecture based on the [Nested Learning: The Illusion of Deep Learning
+Architectures](https://abehrouz.github.io/files/NL.pdf)
 
 ## Architecture
 
 HOPE combines:
+
 - **Self-Modifying Titans**: Memory attention with delta rule updates (Eq. 28-29)
 - **Continuum Memory System (CMS)**: Multi-frequency FFN chain (Eq. 30-31)
 
@@ -15,6 +17,7 @@ M_{t+1} = M_t - M_t * k_t * k_t^T - eta * (M_t * k_t - v_t) * k_t^T
 ```
 
 Where:
+
 - First term: Forgetting (removes old association for key)
 - Second term: Learning (gradient descent on L2 loss)
 
@@ -78,7 +81,7 @@ generated = model.generate(
 ## Model Sizes
 
 | Size  | Parameters |
-|-------|------------|
+| ----- | ---------- |
 | Small | 68M        |
 | Base  | 279M       |
 | Large | 978M       |
@@ -90,6 +93,7 @@ uv run python train.py --model_size small --batch_size 8 --learning_rate 1e-4
 ```
 
 Options:
+
 - `--optimizer`: adamw, adam_delta, sgd_delta, deep_momentum
 - `--lr_scheduler`: cosine, linear, constant
 - `--dtype`: float32, float16, bfloat16
