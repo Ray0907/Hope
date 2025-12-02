@@ -12,8 +12,8 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple, List, Dict
 
-from hope.modules.titans import SelfModifyingTitans, SelfModifyingTitansChunk
-from hope.modules.continuum_memory import ContinuumMemorySystem, AdaptiveCMS
+from src.modules.titans import SelfModifyingTitans, SelfModifyingTitansChunk
+from src.modules.continuum_memory import ContinuumMemorySystem, AdaptiveCMS
 
 
 class HopeBlock(nn.Module):

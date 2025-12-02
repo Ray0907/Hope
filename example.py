@@ -14,11 +14,11 @@ Reference: Nested Learning paper
 import torch
 import torch.nn as nn
 
-from hope.config import HopeConfig, HopeSmallConfig, HopeBaseConfig
-from hope.model import Hope, HopeForCausalLM, createHopeModel
-from hope.modules.titans import SelfModifyingTitans
-from hope.modules.continuum_memory import ContinuumMemorySystem
-from hope.optimizers import AdamWithDeltaRule
+from src.config import HopeConfig, HopeSmallConfig, HopeBaseConfig
+from src.model import Hope, HopeForCausalLM, createHopeModel
+from src.modules.titans import SelfModifyingTitans
+from src.modules.continuum_memory import ContinuumMemorySystem
+from src.optimizers import AdamWithDeltaRule
 
 
 def exampleBasicUsage():

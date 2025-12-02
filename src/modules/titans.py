@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict, List
 import math
 
-from hope.layers.associative_memory import DeltaRuleMemory, LinearAttentionMemory
+from src.layers.associative_memory import DeltaRuleMemory, LinearAttentionMemory
 
 
 class SelfModifyingTitans(nn.Module):
@@ -706,6 +706,392 @@ class SelfReferentialTitans(nn.Module):
         output = self.dropout(output)
 
         return output, memory_state, memory_momentum
+
+
+class MemoryAsGate(nn.Module):
+    """
+    Memory as Gate (MAG) variant of Titans.
+
+    In MAG, the memory output is used to gate the attention scores.
+    This allows the memory to modulate which attended information
+    is passed through.
+
+    Architecture:
+        1. Compute attention output: attn_out = softmax(QK^T/sqrt(d)) @ V
+        2. Retrieve from memory: mem_out = M @ q
+        3. Compute gate: gate = sigmoid(mem_out)
+        4. Output: out = gate * attn_out
+
+    Reference: Titans paper Section 4.2
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        head_dim: int = 64,
+        num_heads: int = 12,
+        learning_rate: float = 0.1,
+        momentum: float = 0.9,
+        use_delta_rule: bool = True,
+        dropout: float = 0.0,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.num_heads = num_heads
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.use_delta_rule = use_delta_rule
+        self.eps = eps
+
+        # Projections for attention
+        self.w_k = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_v = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_q = nn.Linear(dim, num_heads * head_dim, bias=False)
+
+        # Separate projections for memory (key/value may differ from attention)
+        self.w_mk = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_mv = nn.Linear(dim, num_heads * head_dim, bias=False)
+
+        # Output projection
+        self.w_o = nn.Linear(num_heads * head_dim, dim, bias=False)
+
+        # Normalization
+        self.norm_input = nn.LayerNorm(dim)
+        self.norm_k = nn.LayerNorm(head_dim)
+        self.norm_q = nn.LayerNorm(head_dim)
+
+        # Learnable memory parameters
+        self.lr_scale = nn.Parameter(torch.ones(num_heads))
+        self.forget_scale = nn.Parameter(torch.ones(num_heads))
+
+        # Gate projection (from memory output to gate values)
+        self.gate_proj = nn.Sequential(
+            nn.Linear(head_dim, head_dim),
+            nn.Sigmoid(),
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+        # Initialize
+        self.applyInit()
+
+    def applyInit(self):
+        """Initialize weights for stable training."""
+        for module in [self.w_k, self.w_v, self.w_q, self.w_mk, self.w_mv, self.w_o]:
+            nn.init.xavier_uniform_(module.weight)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory_state: Optional[torch.Tensor] = None,
+        return_memory: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass through Memory as Gate (MAG).
+
+        Args:
+            x: Input tensor (batch, seq_len, dim)
+            memory_state: Previous memory state (batch, num_heads, head_dim, head_dim)
+            return_memory: Whether to return updated memory state
+
+        Returns:
+            output: Output tensor (batch, seq_len, dim)
+            memory_state: Updated memory state (if return_memory=True)
+        """
+        batch_size, seq_len, _ = x.shape
+
+        # Normalize input
+        x_normed = self.norm_input(x)
+
+        # Initialize memory if needed
+        if memory_state is None:
+            memory_state = torch.zeros(
+                batch_size, self.num_heads, self.head_dim, self.head_dim,
+                device=x.device, dtype=x.dtype,
+            )
+
+        # Compute attention projections
+        k = self.w_k(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        v = self.w_v(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        q = self.w_q(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+
+        # Compute memory projections
+        mk = self.w_mk(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        mv = self.w_mv(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+
+        # Transpose: (batch, heads, seq, head_dim)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        q = q.transpose(1, 2)
+        mk = mk.transpose(1, 2)
+        mv = mv.transpose(1, 2)
+
+        # Normalize
+        k = self.norm_k(k)
+        q = self.norm_q(q)
+        mk = self.norm_k(mk)
+
+        lr = torch.sigmoid(self.lr_scale).view(1, self.num_heads, 1, 1) * self.learning_rate * 2
+
+        outputs = []
+
+        for t in range(seq_len):
+            k_t = k[:, :, t:t+1, :]  # (batch, heads, 1, head_dim)
+            v_t = v[:, :, t:t+1, :]
+            q_t = q[:, :, t:t+1, :]
+            mk_t = mk[:, :, t:t+1, :]
+            mv_t = mv[:, :, t:t+1, :]
+
+            # Step 1: Causal attention output (use cumulative KV)
+            # For simplicity, use linear attention approximation
+            k_elu = F.elu(k[:, :, :t+1, :]) + 1
+            q_elu = F.elu(q_t) + 1
+
+            kv = torch.einsum("bhsk,bhsv->bhkv", k_elu, v[:, :, :t+1, :])
+            k_sum = k_elu.sum(dim=2, keepdim=True) + self.eps
+            attn_out = torch.einsum("bhkv,bhsk->bhsv", kv, q_elu) / (
+                torch.einsum("bhsk,bhsk->bhs", q_elu, k_sum).unsqueeze(-1) + self.eps
+            )
+
+            # Step 2: Retrieve from memory
+            mem_out = torch.einsum("bhdk,bhsk->bhsd", memory_state, q_t)
+
+            # Step 3: Compute gate from memory output
+            gate = self.gate_proj(mem_out)  # (batch, heads, 1, head_dim)
+
+            # Step 4: Gate the attention output
+            output_t = gate * attn_out
+
+            outputs.append(output_t)
+
+            # Step 5: Update memory using delta rule
+            if self.use_delta_rule:
+                mk_t_norm = mk_t / (mk_t.norm(dim=-1, keepdim=True) + self.eps)
+                predicted = torch.einsum("bhdk,bhsk->bhsd", memory_state, mk_t_norm)
+                surprise = predicted - mv_t
+                forget_term = torch.einsum("bhsd,bhsk->bhdk", predicted, mk_t_norm)
+                learn_term = torch.einsum("bhsd,bhsk->bhdk", surprise, mk_t_norm)
+                memory_state = memory_state - forget_term - lr * learn_term
+            else:
+                update = torch.einsum("bhsv,bhsk->bhvk", mv_t, mk_t)
+                memory_state = memory_state + lr * update
+
+        # Stack outputs
+        output = torch.cat(outputs, dim=2)
+        output = output.transpose(1, 2).contiguous()
+        output = output.view(batch_size, seq_len, -1)
+
+        # Output projection
+        output = self.w_o(output)
+        output = self.dropout(output)
+
+        if return_memory:
+            return output, memory_state
+        return output, None
+
+
+class MemoryAsLayer(nn.Module):
+    """
+    Memory as Layer (MAL) variant of Titans.
+
+    In MAL, memory operates as a separate processing layer between
+    input and attention. The sequence flow is:
+        Input -> Memory Layer -> Attention Layer -> Output
+
+    This allows memory to pre-process and enrich the input before
+    attention sees it.
+
+    Architecture:
+        1. Memory retrieval: mem_out = M @ x
+        2. Residual connection: enriched = x + mem_out
+        3. Attention: out = Attention(enriched)
+        4. Update memory with (k, v) from attention
+
+    Reference: Titans paper Section 4.3
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        head_dim: int = 64,
+        num_heads: int = 12,
+        learning_rate: float = 0.1,
+        momentum: float = 0.9,
+        use_delta_rule: bool = True,
+        dropout: float = 0.0,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.num_heads = num_heads
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.use_delta_rule = use_delta_rule
+        self.eps = eps
+
+        # Memory query projection (to retrieve from memory)
+        self.w_mq = nn.Linear(dim, num_heads * head_dim, bias=False)
+
+        # Memory key/value projections (for updating memory)
+        self.w_mk = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_mv = nn.Linear(dim, num_heads * head_dim, bias=False)
+
+        # Memory output projection (back to dim)
+        self.w_mo = nn.Linear(num_heads * head_dim, dim, bias=False)
+
+        # Attention projections
+        self.w_k = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_v = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_q = nn.Linear(dim, num_heads * head_dim, bias=False)
+        self.w_o = nn.Linear(num_heads * head_dim, dim, bias=False)
+
+        # Normalization
+        self.norm_input = nn.LayerNorm(dim)
+        self.norm_mem = nn.LayerNorm(dim)
+        self.norm_k = nn.LayerNorm(head_dim)
+        self.norm_q = nn.LayerNorm(head_dim)
+
+        # Learnable memory parameters
+        self.lr_scale = nn.Parameter(torch.ones(num_heads))
+        self.forget_scale = nn.Parameter(torch.ones(num_heads))
+
+        # Memory layer gate (controls how much memory contributes)
+        self.mem_gate = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.Sigmoid(),
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+        # Initialize
+        self.applyInit()
+
+    def applyInit(self):
+        """Initialize weights for stable training."""
+        for module in [
+            self.w_mq, self.w_mk, self.w_mv, self.w_mo,
+            self.w_k, self.w_v, self.w_q, self.w_o
+        ]:
+            nn.init.xavier_uniform_(module.weight)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory_state: Optional[torch.Tensor] = None,
+        return_memory: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass through Memory as Layer (MAL).
+
+        Args:
+            x: Input tensor (batch, seq_len, dim)
+            memory_state: Previous memory state (batch, num_heads, head_dim, head_dim)
+            return_memory: Whether to return updated memory state
+
+        Returns:
+            output: Output tensor (batch, seq_len, dim)
+            memory_state: Updated memory state (if return_memory=True)
+        """
+        batch_size, seq_len, _ = x.shape
+
+        # Normalize input
+        x_normed = self.norm_input(x)
+
+        # Initialize memory if needed
+        if memory_state is None:
+            memory_state = torch.zeros(
+                batch_size, self.num_heads, self.head_dim, self.head_dim,
+                device=x.device, dtype=x.dtype,
+            )
+
+        lr = torch.sigmoid(self.lr_scale).view(1, self.num_heads, 1, 1) * self.learning_rate * 2
+
+        # ===== Memory Layer =====
+        # Project to memory query
+        mq = self.w_mq(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        mq = mq.transpose(1, 2)  # (batch, heads, seq, head_dim)
+        mq = self.norm_q(mq)
+
+        # Memory key/value for updates
+        mk = self.w_mk(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        mv = self.w_mv(x_normed).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        mk = mk.transpose(1, 2)
+        mv = mv.transpose(1, 2)
+        mk = self.norm_k(mk)
+
+        # Process sequentially for memory retrieval and update
+        mem_outputs = []
+
+        for t in range(seq_len):
+            mq_t = mq[:, :, t:t+1, :]
+            mk_t = mk[:, :, t:t+1, :]
+            mv_t = mv[:, :, t:t+1, :]
+
+            # Retrieve from memory
+            mem_out_t = torch.einsum("bhdk,bhsk->bhsd", memory_state, mq_t)
+            mem_outputs.append(mem_out_t)
+
+            # Update memory using delta rule
+            if self.use_delta_rule:
+                mk_t_norm = mk_t / (mk_t.norm(dim=-1, keepdim=True) + self.eps)
+                predicted = torch.einsum("bhdk,bhsk->bhsd", memory_state, mk_t_norm)
+                surprise = predicted - mv_t
+                forget_term = torch.einsum("bhsd,bhsk->bhdk", predicted, mk_t_norm)
+                learn_term = torch.einsum("bhsd,bhsk->bhdk", surprise, mk_t_norm)
+                memory_state = memory_state - forget_term - lr * learn_term
+            else:
+                update = torch.einsum("bhsv,bhsk->bhvk", mv_t, mk_t)
+                memory_state = memory_state + lr * update
+
+        # Stack memory outputs: (batch, heads, seq, head_dim)
+        mem_output = torch.cat(mem_outputs, dim=2)
+        mem_output = mem_output.transpose(1, 2).contiguous()
+        mem_output = mem_output.view(batch_size, seq_len, -1)
+        mem_output = self.w_mo(mem_output)
+
+        # Gate the memory contribution
+        gate = self.mem_gate(torch.cat([x_normed, mem_output], dim=-1))
+        enriched = x_normed + gate * mem_output
+        enriched = self.norm_mem(enriched)
+
+        # ===== Attention Layer =====
+        k = self.w_k(enriched).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        v = self.w_v(enriched).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        q = self.w_q(enriched).view(batch_size, seq_len, self.num_heads, self.head_dim)
+
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        q = q.transpose(1, 2)
+
+        k = self.norm_k(k)
+        q = self.norm_q(q)
+
+        # Linear attention
+        k_elu = F.elu(k) + 1
+        q_elu = F.elu(q) + 1
+
+        # Build cumulative KV for causal attention
+        kv = torch.einsum("bhsk,bhsv->bhskv", k_elu, v)
+        kv_cumsum = torch.cumsum(kv, dim=2)
+        k_cumsum = torch.cumsum(k_elu, dim=2) + self.eps
+
+        # Causal linear attention
+        attn_out = torch.einsum("bhskv,bhsk->bhsv", kv_cumsum, q_elu)
+        normalizer = torch.einsum("bhsk,bhsk->bhs", q_elu, k_cumsum).unsqueeze(-1) + self.eps
+        attn_out = attn_out / normalizer
+
+        # Reshape output
+        output = attn_out.transpose(1, 2).contiguous()
+        output = output.view(batch_size, seq_len, -1)
+        output = self.w_o(output)
+        output = self.dropout(output)
+
+        if return_memory:
+            return output, memory_state
+        return output, None
 
 
 class FullyNestedTitans(nn.Module):

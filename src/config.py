@@ -3,7 +3,12 @@ Configuration for HOPE architecture.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Literal
+
+
+# Type aliases for configuration options
+TitansVariant = Literal["mac", "mag", "mal"]
+MemoryType = Literal["delta", "dynamic_decay", "surprise_gated", "capacity_managed"]
 
 
 @dataclass
@@ -57,6 +62,32 @@ class HopeConfig:
     momentum_decay: float = 0.9
     use_delta_rule: bool = True
 
+    # Titans variant configuration
+    titans_variant: str = "mac"  # "mac", "mag", or "mal"
+
+    # Persistent Memory configuration
+    use_persistent_memory: bool = False
+    num_persistent_slots: int = 64
+    persistent_combine_mode: str = "gate"  # "gate", "add", "concat"
+
+    # Dynamic Decay configuration
+    use_dynamic_decay: bool = False
+    base_decay: float = 0.01
+    decay_utilization_weight: float = 0.1
+    decay_surprise_weight: float = 0.1
+    max_decay: float = 0.5
+
+    # Surprise-based Gating configuration
+    use_surprise_gating: bool = False
+    surprise_threshold: float = 0.1
+    surprise_temperature: float = 0.1
+    adaptive_threshold: bool = True
+
+    # Memory Capacity Management
+    use_capacity_management: bool = False
+    memory_max_norm: float = 10.0
+    memory_prune_threshold: float = 0.01
+
     # Sequence
     max_seq_len: int = 8192
 
@@ -80,6 +111,22 @@ class HopeConfig:
         # Ensure chunk sizes are in ascending order (lower -> higher frequency)
         if self.chunk_sizes != sorted(self.chunk_sizes):
             raise ValueError("chunk_sizes must be in ascending order")
+
+        # Validate Titans variant
+        valid_variants = ["mac", "mag", "mal"]
+        if self.titans_variant not in valid_variants:
+            raise ValueError(
+                f"titans_variant must be one of {valid_variants}, "
+                f"got '{self.titans_variant}'"
+            )
+
+        # Validate persistent memory combine mode
+        valid_combine_modes = ["gate", "add", "concat"]
+        if self.persistent_combine_mode not in valid_combine_modes:
+            raise ValueError(
+                f"persistent_combine_mode must be one of {valid_combine_modes}, "
+                f"got '{self.persistent_combine_mode}'"
+            )
 
 
 @dataclass

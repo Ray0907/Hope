@@ -22,14 +22,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from hope.config import (
+from src.config import (
     HopeConfig,
     HopeSmallConfig,
     HopeBaseConfig,
     HopeLargeConfig,
 )
-from hope.model import Hope, HopeForCausalLM, createHopeModel
-from hope.optimizers import (
+from src.model import Hope, HopeForCausalLM, createHopeModel
+from src.optimizers import (
     DeepMomentumGD,
     DeltaRuleOptimizer,
     AdamWithDeltaRule,

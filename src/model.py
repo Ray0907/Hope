@@ -16,8 +16,8 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, List, Dict, Union
 import math
 
-from hope.config import HopeConfig
-from hope.modules.hope_block import HopeBlock, HopeBlockStack
+from src.config import HopeConfig
+from src.modules.hope_block import HopeBlock, HopeBlockStack
 
 
 class Hope(nn.Module):
@@ -395,7 +395,7 @@ def createHopeModel(
     Returns:
         Hope model instance
     """
-    from hope.config import (
+    from src.config import (
         HopeSmallConfig,
         HopeBaseConfig,
         HopeLargeConfig,

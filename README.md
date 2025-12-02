@@ -1,11 +1,10 @@
-# HOPE - Hierarchical Online Predictive Encoding
+# HOPE - Hierarchical Optimization with Persistent Experience
 
-Implementation of the HOPE architecture based on the [Nested Learning: The Illusion of Deep Learning
-Architectures](https://abehrouz.github.io/files/NL.pdf)
+Implementation of the HOPE architecture based on the [Nested Learning: The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf) paper.
 
-## Architecture
+## Architecture Overview
 
-HOPE combines:
+HOPE combines two core components from the Nested Learning paper:
 
 - **Self-Modifying Titans**: Memory attention with delta rule updates (Eq. 28-29)
 - **Continuum Memory System (CMS)**: Multi-frequency FFN chain (Eq. 30-31)
@@ -40,8 +39,8 @@ pip install torch
 ### Basic Usage
 
 ```python
-from hope.config import HopeSmallConfig
-from hope.model import HopeForCausalLM
+from src.config import HopeSmallConfig
+from src.model import HopeForCausalLM
 
 config = HopeSmallConfig(vocab_size=32000)
 model = HopeForCausalLM(config)
@@ -54,7 +53,7 @@ loss = outputs["loss"]
 ### Memory Management
 
 ```python
-from hope.model import Hope
+from src.model import Hope
 
 model = Hope(config)
 memory_states = None
@@ -80,11 +79,12 @@ generated = model.generate(
 
 ## Model Sizes
 
-| Size  | Parameters |
-| ----- | ---------- |
-| Small | 68M        |
-| Base  | 279M       |
-| Large | 978M       |
+| Size  | Parameters | dim  | layers | heads |
+| ----- | ---------- | ---- | ------ | ----- |
+| Small | ~125M      | 512  | 8      | 8     |
+| Base  | ~350M      | 768  | 12     | 12    |
+| Large | ~760M      | 1024 | 24     | 16    |
+| XL    | ~1.3B      | 2048 | 24     | 32    |
 
 ## Training
 
@@ -94,7 +94,7 @@ uv run python train.py --model_size small --batch_size 8 --learning_rate 1e-4
 
 Options:
 
-- `--optimizer`: adamw, adam_delta, sgd_delta, deep_momentum
+- `--optimizer`: adamw, adam_delta, sgd_delta, deep_momentum, muon
 - `--lr_scheduler`: cosine, linear, constant
 - `--dtype`: float32, float16, bfloat16
 
@@ -113,19 +113,27 @@ uv run python example.py
 ## Project Structure
 
 ```
-hope/
-    config.py           # Model configurations
-    model.py            # Main Hope model
+src/
+    __init__.py
+    config.py              # Model configurations
+    model.py               # Main Hope model
+    optimizers.py          # Deep optimizers (DMGD, Muon, etc.)
     modules/
-        titans.py       # Self-Modifying Titans
-        continuum_memory.py  # CMS
-        hope_block.py   # Combined block
+        __init__.py
+        titans.py          # Self-Modifying Titans variants
+        continuum_memory.py  # CMS and variants
+        hope_block.py      # Combined HOPE block
     layers/
+        __init__.py
         associative_memory.py  # Delta rule memory
-        neural_memory.py       # Neural memory modules
-    optimizers.py       # Custom optimizers (Adam+Delta, Muon, etc.)
+        neural_memory.py       # MLP-based neural memory
 ```
 
 ## Reference
 
-[Nested Learning - The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf)
+- [Nested Learning - The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf)
+- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)
+
+## License
+
+MIT License

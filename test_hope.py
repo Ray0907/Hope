@@ -17,14 +17,14 @@ import math
 from typing import Optional
 
 # Import HOPE components
-from hope.config import HopeConfig, HopeSmallConfig
-from hope.model import Hope, HopeForCausalLM, createHopeModel
-from hope.modules.titans import SelfModifyingTitans, SelfModifyingTitansChunk
-from hope.modules.continuum_memory import ContinuumMemorySystem, FrequencyFFN
-from hope.modules.hope_block import HopeBlock
-from hope.layers.associative_memory import DeltaRuleMemory, LinearAttentionMemory
-from hope.layers.neural_memory import FastNeuralMemory, NeuralMemory
-from hope.optimizers import (
+from src.config import HopeConfig, HopeSmallConfig
+from src.model import Hope, HopeForCausalLM, createHopeModel
+from src.modules.titans import SelfModifyingTitans, SelfModifyingTitansChunk
+from src.modules.continuum_memory import ContinuumMemorySystem, FrequencyFFN
+from src.modules.hope_block import HopeBlock
+from src.layers.associative_memory import DeltaRuleMemory, LinearAttentionMemory
+from src.layers.neural_memory import FastNeuralMemory, NeuralMemory
+from src.optimizers import (
     DeepMomentumGD,
     DeltaRuleOptimizer,
     AdamWithDeltaRule,
