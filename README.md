@@ -1,13 +1,18 @@
 # HOPE - Hierarchical Optimization with Persistent Experience
 
-Implementation of the HOPE architecture based on the [Nested Learning: The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf) paper.
+Implementation of the HOPE architecture based on:
+
+- [Nested Learning: The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf)
+- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)
+- [MIRAS: Memory Is All You Need](https://arxiv.org/abs/2504.13173)
 
 ## Architecture Overview
 
-HOPE combines two core components from the Nested Learning paper:
+HOPE combines core components from the Nested Learning and Titans papers, plus the MIRAS unified framework:
 
 - **Self-Modifying Titans**: Memory attention with delta rule updates (Eq. 28-29)
 - **Continuum Memory System (CMS)**: Multi-frequency FFN chain (Eq. 30-31)
+- **MIRAS Framework**: Unified memory system with configurable attentional bias and retention gates
 
 ### Delta Rule (Eq. 28-29)
 
@@ -19,6 +24,25 @@ Where:
 
 - First term: Forgetting (removes old association for key)
 - Second term: Learning (gradient descent on L2 loss)
+
+### MIRAS Framework
+
+The MIRAS framework unifies sequence models through 4 design choices:
+
+| Choice | Options | Description |
+|--------|---------|-------------|
+| Memory Architecture | Vector, Matrix, MLP | How memory is structured |
+| Attentional Bias | L2, Lp, Huber, KL | Internal memory objective |
+| Retention Gate | L2, Lq, KL, Elastic Net | How to retain past state |
+| Learning Algorithm | GD, GD+Momentum, Newton | How to update memory |
+
+Three pre-configured MIRAS models:
+
+| Model | Attentional Bias | Retention Gate | Use Case |
+|-------|------------------|----------------|----------|
+| **Moneta** | Lp (p in (1,2)) | Lq (q in (1,2)) | Robust to key collisions |
+| **Yaad** | Huber Loss | L2 | Robust to outlier values |
+| **Memora** | L2 | KL-divergence | Soft thresholding |
 
 ## Installation
 
@@ -64,6 +88,26 @@ for batch in dataloader:
         memory_states=memory_states,
         return_memory=True,
     )
+```
+
+### MIRAS Models
+
+```python
+from src.layers import Moneta, Yaad, Memora, MirasMemory
+
+# Pre-configured models
+moneta = Moneta(dim=512, num_heads=8, p=1.5, q=1.5)
+yaad = Yaad(dim=512, num_heads=8, huber_delta=1.0)
+memora = Memora(dim=512, num_heads=8, kl_temperature=1.0)
+
+# Custom configuration
+memory = MirasMemory(
+    dim_key=64, dim_value=64,
+    attentional_bias="huber",  # l2, lp, huber, kl, dot_product
+    retention_gate="elastic_net",  # l2, lq, kl, elastic_net, bregman
+    learning_rate=0.1,
+    retention_strength=0.1,
+)
 ```
 
 ### Text Generation
@@ -120,19 +164,23 @@ src/
     optimizers.py          # Deep optimizers (DMGD, Muon, etc.)
     modules/
         __init__.py
-        titans.py          # Self-Modifying Titans variants
+        titans.py          # Self-Modifying Titans (MAC, MAG, MAL)
         continuum_memory.py  # CMS and variants
         hope_block.py      # Combined HOPE block
     layers/
         __init__.py
         associative_memory.py  # Delta rule memory
         neural_memory.py       # MLP-based neural memory
+        attentional_bias.py    # MIRAS attentional bias (L2, Lp, Huber, KL)
+        retention_gates.py     # MIRAS retention gates (L2, Lq, KL, Elastic Net)
+        miras_memory.py        # MIRAS models (Moneta, Yaad, Memora)
 ```
 
 ## Reference
 
 - [Nested Learning - The Illusion of Deep Learning Architectures](https://abehrouz.github.io/files/NL.pdf)
 - [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)
+- [MIRAS: Memory Is All You Need](https://arxiv.org/abs/2504.13173)
 
 ## License
 
