@@ -25,6 +25,40 @@ Where:
 - First term: Forgetting (removes old association for key)
 - Second term: Learning (gradient descent on L2 loss)
 
+### Titans Variants
+
+Three architectural variants for integrating memory with attention:
+
+| Variant | Config | Description |
+|---------|--------|-------------|
+| **MAC** | `mac` | Memory as Context - memory output concatenated with attention (default) |
+| **MAG** | `mag` | Memory as Gate - memory gates attention output via sigmoid |
+| **MAL** | `mal` | Memory as Layer - memory pre-processes input before attention |
+
+```python
+# Select variant via config
+config = HopeSmallConfig(titans_variant="mag")  # mac, mag, mal
+
+# Or use directly
+from src.modules import MemoryAsGate, MemoryAsLayer
+
+mag = MemoryAsGate(dim=512, num_heads=8)
+mal = MemoryAsLayer(dim=512, num_heads=8)
+```
+
+**MAG (Memory as Gate)**:
+```
+attn_out = softmax(QK^T/sqrt(d)) @ V
+gate = sigmoid(Memory @ q)
+output = gate * attn_out
+```
+
+**MAL (Memory as Layer)**:
+```
+enriched = x + Memory @ x
+output = Attention(enriched)
+```
+
 ### MIRAS Framework
 
 The MIRAS framework unifies sequence models through 4 design choices:
